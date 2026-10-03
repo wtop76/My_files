@@ -1,0 +1,65 @@
+# =============================================
+# Automatic Fix for File AND Printer Sharing - Windows 11 25H2
+# Fixes 0x0000011b + SMB file sharing issues
+# Run as Administrator
+# =============================================
+
+Write-Host "Starting File and Printer Sharing Fix for Windows 11 25H2..." -ForegroundColor Yellow
+
+# 1. Registry Fix for Printer Sharing (RPC Authentication)
+Write-Host "Applying RPC fix for printers (0x0000011b)..." -ForegroundColor Cyan
+
+$regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Print"
+if (-not (Test-Path $regPath)) {
+    New-Item -Path $regPath -Force | Out-Null
+}
+New-ItemProperty -Path $regPath -Name "RpcAuthnLevelPrivacyEnabled" -PropertyType DWord -Value 0 -Force | Out-Null
+
+# Additional RPC settings
+$rpcPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC"
+if (-not (Test-Path $rpcPath)) {
+    New-Item -Path $rpcPath -Force | Out-Null
+}
+New-ItemProperty -Path $rpcPath -Name "RpcUseNamedPipeProtocol" -PropertyType DWord -Value 1 -Force | Out-Null
+New-ItemProperty -Path $rpcPath -Name "RpcProtocols" -PropertyType DWord -Value 7 -Force | Out-Null
+
+# 2. SMB Fixes for File Sharing (Insecure Guest + Disable Security Signature)
+Write-Host "Applying SMB fixes for file sharing..." -ForegroundColor Cyan
+
+Set-SmbClientConfiguration -EnableInsecureGuestLogons $true -Force
+Set-SmbClientConfiguration -RequireSecuritySignature $false -Force
+Set-SmbServerConfiguration -RequireSecuritySignature $false -Force
+
+# AllowInsecureGuestAuth in Registry (extra fix)
+$lanmanPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+if (-not (Test-Path $lanmanPath)) {
+    New-Item -Path $lanmanPath -Force | Out-Null
+}
+New-ItemProperty -Path $lanmanPath -Name "AllowInsecureGuestAuth" -PropertyType DWord -Value 1 -Force | Out-Null
+
+# 3. Clean and restart Print Spooler
+Write-Host "Cleaning and restarting Print Spooler..." -ForegroundColor Cyan
+Stop-Service -Name Spooler -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "C:\Windows\System32\spool\PRINTERS\*" -Force -Recurse -ErrorAction SilentlyContinue
+Start-Service -Name Spooler
+Restart-Service -Name Spooler -Force
+
+# 4. Enable File and Printer Sharing + Network Discovery
+Write-Host "Enabling File and Printer Sharing and Network Discovery..." -ForegroundColor Cyan
+netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes
+netsh advfirewall firewall set rule group="Network Discovery" new enable=Yes
+
+# Restart supporting services
+Restart-Service -Name fdPHost -Force -ErrorAction SilentlyContinue
+Restart-Service -Name fdrespub -Force -ErrorAction SilentlyContinue
+
+Write-Host "`nFile and Printer Sharing Fix applied successfully!" -ForegroundColor Green
+Write-Host "Important notes:" -ForegroundColor Yellow
+Write-Host "- Make sure your network profile is set to 'Private' (not Public)." -ForegroundColor Cyan
+Write-Host "- On the host PC: Share your folders and printer again if needed." -ForegroundColor Cyan
+Write-Host "- Restart the computer now to apply all changes." -ForegroundColor Cyan
+
+# Uncomment the next 3 lines if you want automatic restart
+# Write-Host "The computer will restart in 10 seconds..." -ForegroundColor Red
+# Start-Sleep -Seconds 10
+# Restart-Computer -Force
